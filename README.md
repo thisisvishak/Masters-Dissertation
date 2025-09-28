@@ -1,6 +1,6 @@
-# Risk-Calibrated and Explainable Credit Card Default Prediction  
-**Monotonic LightGBM with Isotonic Calibration and Split Conformal Prediction**  
-MSc Dissertation Repository
+# Risk-Calibrated and Explainable Credit Card Default Prediction
+**Using Monotonic LightGBM with Isotonic Calibration and Split Conformal Prediction**  
+**MSc Dissertation Repository**
 
 ---
 
