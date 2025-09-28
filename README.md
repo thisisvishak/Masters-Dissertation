@@ -1,287 +1,330 @@
-# Masters-Dissertation
-Risk-Calibrated & Explainable Credit Card Default Prediction
+# Risk-Calibrated and Explainable Credit Card Default Prediction  
+**Monotonic LightGBM with Isotonic Calibration and Split Conformal Prediction**  
+MSc Dissertation Repository
 
-Monotonic LightGBM + Isotonic Calibration + Split Conformal Prediction
+---
 
-End-to-end reproducible pipeline on the Taiwan Default of Credit Card Clients dataset: data prep, feature engineering, model training, calibration, explainability (SHAP), business decisioning (profit & approval/default trade-offs), fairness checks, and packaging for scoring.
+## Table of Contents
+- [Project Overview](#project-overview)
+- [Dataset](#dataset)
+- [Method Summary](#method-summary)
+- [Engineered Features](#engineered-features)
+- [Model Suite](#model-suite)
+- [Reproducible Environment](#reproducible-environment)
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [End-to-End Pipeline (CLI)](#end-to-end-pipeline-cli)
+- [Key Results (Test Set)](#key-results-test-set)
+- [Business Policy](#business-policy)
+- [Explainability](#explainability)
+- [Fairness & Uncertainty](#fairness--uncertainty)
+- [Saved Artifacts](#saved-artifacts)
+- [Citations (Harvard style)](#citations-harvard-style)
+- [License](#license)
 
-1) Project goals
+---
 
-Predict next-month default risk at customer level.
+## Project Overview
+This repository implements an end-to-end, production-ready credit risk workflow on the **Default of Credit Card Clients (Taiwan)** dataset.  
+It delivers:
+- A **monotonic LightGBM** classifier calibrated with **isotonic regression**;
+- **Split conformal prediction** for per-case uncertainty bands;
+- **SHAP-based** global and local explanations;
+- A **three-band decision policy** (approve / review / decline) optimised by profit curves;
+- A packaged **predictor class** and versioned artifacts for deployment.
 
-Explain why (global + local) and quantify uncertainty per case.
+---
 
-Convert scores into approve/review/decline actions using profit and risk guardrails.
+## Dataset
+- **Source:** Kaggle – *Default of Credit Card Clients* (30,000 customers, Taiwan).
+- **Target:** `default.payment.next.month` (1 = default next month).
+- **Horizon:** 6 months of bills (`BILL_AMT1..6`), payments (`PAY_AMT1..6`), and repayment status (`PAY_0, PAY_2..6`) + demographics and `LIMIT_BAL`.
 
-Deliver a reproducible Python pipeline suitable for validation and monitoring.
+> Download the CSV into `data/` as `UCI_Credit_Card.csv`.
 
-2) Repository structure
+---
+
+## Method Summary
+1. **Data audit & cleaning** (types, label rate, outliers; no missing values in source).  
+2. **Feature engineering** (utilisation, payment ratios, delinquency flags/trends, aggregates, demographic groupings).  
+3. **Preprocessing** with `ColumnTransformer`:  
+   - `StandardScaler` for numeric;  
+   - `OneHotEncoder(drop="first")` for categorical;  
+   - class imbalance via **class weights**.  
+4. **Model comparison** across 8 algorithms with common preprocessing pipeline.  
+5. **Champion**: monotonic **LightGBM** trained with early stopping; **isotonic calibration** on validation; **split conformal** on calibrated scores.  
+6. **Evaluation**: Accuracy, ROC AUC, PR AUC, **KS**, Brier, lift/gain, calibration curves, approval–default trade-off, **profit curve**.  
+7. **Explainability**: SHAP global bars, beeswarm, water­fall (local), targeted dependence (“story” groups).  
+8. **Packaging**: `CreditRiskPredictor` class saved with `joblib` for downstream scoring.
+
+---
+
+## Engineered Features
+- `UTILIZATION_1..6 = BILL_AMTi / LIMIT_BAL`  
+- `PAY_RATIO_1..6 = PAY_AMTi / BILL_AMTi` (safe 0 when bill==0)  
+- `EVER_60_PLUS` from repayment codes (`PAY_* >= 2`)  
+- `AVG_PAY_STATUS` mean of `PAY_0, PAY_2..6`  
+- `PAY_TREND = PAY_6 - PAY_0`  
+- `FULL_PAYMENT_MONTHS` count where `PAY_AMTi >= BILL_AMTi > 0`  
+- `TOTAL_PAY_RATIO = sum(PAY_AMT) / (sum(BILL_AMT)+1)`  
+- `AGE_GROUP` bins; `EDUCATION_GROUP` merged rare categories
+
+---
+
+## Model Suite
+- Logistic Regression (class-weighted)
+- Decision Tree (tuned, `max_depth`, `min_samples_split`)
+- Random Forest (tuned, class-weighted)
+- XGBoost (tuned, `scale_pos_weight`)
+- LightGBM (tuned, monotonic constraints, `scale_pos_weight`)
+- SVM (RBF, class-weighted, probability=True)
+- KNN (scaled)
+- MLP (2 hidden layers, early stopping)
+
+---
+
+## Reproducible Environment
+# Conda
+conda create -n creditrisk python=3.10 -y
+conda activate creditrisk
+pip install -r requirements.txt
+requirements.txt
+
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+xgboost
+lightgbm
+shap
+joblib
+
+# Project Structure
+
 .
-├── README.md
-├── environment.yml                # or requirements.txt
 ├── data/
-│   ├── raw/                       # Kaggle dataset (not committed)
-│   └── interim/                   # cached/processed artifacts
+│   └── UCI_Credit_Card.csv
 ├── notebooks/
-│   ├── 01_data_exploration.ipynb
-│   ├── 02_feature_engineering.ipynb
-│   ├── 03_model_training_compare.ipynb
-│   ├── 04_calibration_conformal.ipynb
-│   ├── 05_explainability_shap.ipynb
-│   ├── 06_business_curves_policy.ipynb
-│   └── 07_fairness_monitoring.ipynb
+│   └── 01_end_to_end_credit_risk.ipynb
 ├── src/
-│   ├── data_prep.py               # load/clean/split/encode/scale
-│   ├── features.py                # engineered features
-│   ├── models.py                  # model zoo + training utilities
-│   ├── calibration.py             # isotonic / platt + reliability plots
-│   ├── conformal.py               # split conformal intervals
-│   ├── explain.py                 # SHAP helpers
-│   ├── business.py                # profit, lift, gain, KS, policy tools
-│   ├── fairness.py                # segment TPR/FPR, PSI helpers
-│   └── predictor.py               # packaged predictor class
-├── outputs/
-│   ├── figures/                   # charts (ROC/PR/KS, SHAP, profit, etc.)
-│   ├── tables/                    # CSV summaries
-│   └── models/
-│       ├── credit_risk_predictor.pkl
-│       └── feature_list.json
-└── Makefile                       # shortcuts to run pipeline
+│   ├── features.py
+│   ├── preprocessing.py
+│   ├── models.py
+│   ├── evaluation.py
+│   ├── explain.py
+│   └── predict.py
+├── artifacts/
+│   ├── credit_risk_predictor.pkl
+│   └── feature_list.json
+├── figures/
+│   └── (generated plots)
+├── requirements.txt
+└── README.md
 
 
-Keep raw data out of version control; place under data/raw/.
+# Quick Start
 
-3) Data
+# 1) Place dataset
+mkdir -p data artifacts figures
+cp /path/to/UCI_Credit_Card.csv data/
 
-Source: Kaggle – Default of Credit Card Clients (Taiwan), 30,000 rows
-
-Target: default.payment.next.month (1 = default next month)
-
-Time window: 6 months of bills & payments, plus demographics & limit
-
-Place the CSV (usually UCI_Credit_Card.csv) into data/raw/.
-
-4) Environment
-Option A: Conda
-conda env create -f environment.yml
-conda activate credit-risk
-
-Option B: pip
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+# 2) Create environment & install
+conda create -n creditrisk python=3.10 -y
+conda activate creditrisk
 pip install -r requirements.txt
 
-
-Key libraries: pandas, numpy, scikit-learn, lightgbm, xgboost, shap, matplotlib, seaborn, joblib.
-
-5) One-shot quick start
-
-Run the full pipeline end-to-end and write artifacts to outputs/:
-
-make all
-
-
-Typical Makefile targets:
-
-all: prep features train calibrate explain business
-
-prep:
-	python -m src.data_prep --input data/raw/UCI_Credit_Card.csv --out data/interim/clean.parquet
-
-features:
-	python -m src.features --input data/interim/clean.parquet --out data/interim/features.parquet
-
-train:
-	python -m src.models --input data/interim/features.parquet --out outputs/models
-
-calibrate:
-	python -m src.calibration --in-model outputs/models/lgb.pkl --valid data/interim/valid.parquet --out outputs/models
-
-explain:
-	python -m src.explain --in-model outputs/models/credit_risk_predictor.pkl --test data/interim/test.parquet --figdir outputs/figures
-
-business:
-	python -m src.business --pred outputs/tables/test_predictions.csv --figdir outputs/figures --tabledir outputs/tables
-
-
-Prefer notebooks for exploratory work and the Makefile/scripts for reproducible runs.
-
-6) Pipeline overview
-6.1 Data preparation
-
-Type fixes, label inspection, outlier winsorisation (bills & payments).
-
-Train/validation/test split: 70/15/15 (stratified).
-
-Class imbalance handled via class weights (default) and optional SMOTE for non-tree models.
-
-6.2 Feature engineering
-
-Utilisation: UTILIZATION_[1..6] = BILL_AMTi / LIMIT_BAL
-
-Payment ratio: PAY_RATIO_[1..6] = PAY_AMTi / BILL_AMTi (safe division)
-
-Delinquency: EVER_60_PLUS, AVG_PAY_STATUS, PAY_TREND
-
-Payment behaviour: FULL_PAYMENT_MONTHS, TOTAL_PAY_RATIO
-
-Demographic grouping: AGE_GROUP, EDUCATION_GROUP
-
-6.3 Preprocessing
-
-ColumnTransformer: StandardScaler for numeric; OneHotEncoder for categorical.
-
-Unified sklearn Pipeline for each model.
-
-6.4 Model suite
-
-Logistic Regression, Decision Tree, Random Forest, XGBoost, LightGBM, SVM (RBF), KNN, MLP.
-
-Tuning with compact grids; stratified CV; class_weight="balanced" where applicable.
-
-6.5 Calibration & uncertainty
-
-Isotonic Regression on validation set to calibrate probabilities.
-
-Split Conformal Prediction to produce per-case risk intervals (e.g., 90% coverage).
-
-6.6 Evaluation
-
-ROC AUC, PR AUC, KS, accuracy, classification report.
-
-Calibration curve & Brier score.
-
-Lift/Gain, Profit curve, Approval vs Default trade-off.
-
-Fairness slices: TPR/FPR by sex, education, marriage; PSI.
-
-6.7 Explainability
-
-SHAP global (bar + beeswarm), local (waterfall/force), dependence scatter.
-
-Reason codes exported per applicant (top positive contributors).
-
-6.8 Packaging
-
-CreditRiskPredictor class:
-
-.predict(X) → raw score, calibrated probability, conformal lower/upper, risk band.
-
-Model bundle: credit_risk_predictor.pkl stored under outputs/models/.
-
-7) Reproducible examples (snippets)
-7.1 Train the champion (monotonic LightGBM)
+# 3) Run notebook (recommended for full plots)
+jupyter lab notebooks/01_end_to_end_credit_risk.ipynb
+End-to-End Pipeline (CLI)
+bash
+Copy code
+python - <<'PY'
+import pandas as pd, numpy as np, joblib, json
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import accuracy_score, roc_auc_score, brier_score_loss
 import lightgbm as lgb
-from joblib import dump
-# build monotone_constraints list aligned to feature order
-params = dict(
-    objective="binary",
-    metric="auc",
-    learning_rate=0.05,
-    num_leaves=64,
-    max_depth=10,
-    min_data_in_leaf=50,
-    feature_fraction=0.8,
-    bagging_fraction=0.8,
-    bagging_freq=5,
-    scale_pos_weight=2,
-    monotone_constraints=monotone_constraints,
-    random_state=42,
-)
-lgb_model = lgb.train(params, train_data, valid_sets=[val_data], num_boost_round=1000,
-                      callbacks=[lgb.early_stopping(50)])
-dump(lgb_model, "outputs/models/lgb.pkl")
-
-7.2 Calibrate + package predictor
 from sklearn.isotonic import IsotonicRegression
-from joblib import dump, load
-from src.predictor import CreditRiskPredictor
 
-lgb_model = load("outputs/models/lgb.pkl")
-val_raw = lgb_model.predict(X_val)
+# 4) Load
+df = pd.read_csv("data/UCI_Credit_Card.csv")
+
+# 5) Feature engineering (abridged; mirror notebook for full set)
+data = df.rename(columns={"default.payment.next.month":"TARGET"})
+for i in range(1,7):
+    data[f"UTILIZATION_{i}"] = data[f"BILL_AMT{i}"]/ (data["LIMIT_BAL"].replace(0, np.nan))
+    data[f"UTILIZATION_{i}"] = data[f"UTILIZATION_{i}"].fillna(0.0)
+    data[f"PAY_RATIO_{i}"] = np.where(data[f"BILL_AMT{i}"]>0, data[f"PAY_AMT{i}"]/data[f"BILL_AMT{i}"], 0.0)
+
+pay_cols = ["PAY_0","PAY_2","PAY_3","PAY_4","PAY_5","PAY_6"]
+data["EVER_60_PLUS"] = (data[pay_cols] >= 2).any(axis=1).astype(int)
+data["AVG_PAY_STATUS"] = data[pay_cols].mean(axis=1)
+data["PAY_TREND"] = data["PAY_6"] - data["PAY_0"]
+data["FULL_PAYMENT_MONTHS"] = sum((data[f"PAY_AMT{i}"]>=data[f"BILL_AMT{i}"])&(data[f"BILL_AMT{i}"]>0) for i in range(1,7))
+data["TOTAL_PAY_RATIO"] = data[[f"PAY_AMT{i}" for i in range(1,7)]].sum(axis=1) / (data[[f"BILL_AMT{i}" for i in range(1,7)]].sum(axis=1) + 1)
+
+bins = [20,30,40,50,60,80]
+labels = ["20-30","30-40","40-50","50-60","60+"]
+data["AGE_GROUP"] = pd.cut(data["AGE"], bins=bins, labels=labels, include_lowest=True)
+data["EDUCATION_GROUP"] = data["EDUCATION"].replace({0:4,5:4,6:4})
+
+# 6) Train/Val/Test split
+y = data["TARGET"]
+X = data.drop(columns=["ID","TARGET"], errors="ignore")
+X_train, X_temp, y_train, y_temp = train_test_split(X,y,test_size=0.30, stratify=y, random_state=42)
+X_val,   X_test, y_val,   y_test = train_test_split(X_temp,y_temp,test_size=0.50, stratify=y_temp, random_state=42)
+
+# 7) Preprocessing
+categorical_cols = [c for c in ["SEX","MARRIAGE","AGE_GROUP","EDUCATION_GROUP"] if c in X.columns]
+numerical_cols   = [c for c in X.columns if c not in categorical_cols]
+ct = ColumnTransformer(
+    [("num", StandardScaler(), numerical_cols),
+     ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), categorical_cols)]
+)
+
+# 8) Fit LightGBM with monotonic constraints (basic illustration)
+mono = []
+for c in X.columns:
+    if "UTILIZATION" in c or c in pay_cols: mono.append(1)
+    elif "PAY_RATIO" in c or "TOTAL_PAY_RATIO" in c: mono.append(-1)
+    else: mono.append(0)
+
+train_processed = ct.fit_transform(X_train)
+val_processed   = ct.transform(X_val)
+test_processed  = ct.transform(X_test)
+
+lgb_train = lgb.Dataset(train_processed, label=y_train)
+lgb_val   = lgb.Dataset(val_processed,   label=y_val)
+
+params = dict(objective="binary",
+              metric="auc",
+              learning_rate=0.05,
+              num_leaves=64,
+              max_depth=10,
+              min_data_in_leaf=50,
+              feature_fraction=0.8,
+              bagging_fraction=0.8,
+              bagging_freq=5,
+              scale_pos_weight=2,
+              monotone_constraints=mono,
+              verbose=-1,
+              seed=42)
+
+model = lgb.train(params, lgb_train, valid_sets=[lgb_val],
+                  num_boost_round=1000,
+                  callbacks=[lgb.early_stopping(50, verbose=False)])
+
+# 9) Calibration (isotonic)
+val_raw = model.predict(val_processed)
 iso = IsotonicRegression(out_of_bounds="clip").fit(val_raw, y_val)
 
-residuals = abs(y_val - iso.transform(val_raw))
-qhat = np.quantile(residuals, 0.9)
+# 10) Evaluate on test
+test_raw = model.predict(test_processed)
+test_cal = iso.transform(test_raw)
 
-predictor = CreditRiskPredictor(lgb_model, iso, qhat)
-dump(predictor, "outputs/models/credit_risk_predictor.pkl")
+acc   = accuracy_score(y_test, (test_cal>0.5).astype(int))
+auc   = roc_auc_score(y_test, test_cal)
+brier = brier_score_loss(y_test, test_cal)
 
-7.3 Score new data
-from joblib import load
-predictor = load("outputs/models/credit_risk_predictor.pkl")
-scores = predictor.predict(X_new)  # columns aligned to training feature list
+print(f"Test Accuracy: {acc:.3f} | ROC AUC: {auc:.3f} | Brier: {brier:.3f}")
 
-8) Key figures generated
+# 11) Package predictor
+class CreditRiskPredictor:
+    def __init__(self, preprocessor, model, calibrator, qhat):
+        self.preprocessor = preprocessor
+        self.model = model
+        self.calibrator = calibrator
+        self.qhat = qhat
+    def predict(self, Xdf):
+        Z = self.preprocessor.transform(Xdf)
+        raw = self.model.predict(Z)
+        cal = self.calibrator.transform(raw)
+        import numpy as np, pandas as pd
+        low  = np.clip(cal - self.qhat, 0, 1)
+        high = np.clip(cal + self.qhat, 0, 1)
+        band = pd.cut(cal, bins=[0,0.33,0.66,1], labels=["Low","Medium","High"])
+        return pd.DataFrame({"raw":raw,"calibrated":cal,"low":low,"high":high,"band":band})
 
-ROC & PR curves for all models
+# 12) Split conformal on calibrated scores (validation residuals)
+residuals = np.abs(y_val - iso.transform(val_raw))
+qhat = np.quantile(residuals, 0.90)  # 90% coverage
 
-KS curves and KS table
+predictor = CreditRiskPredictor(ct, model, iso, qhat)
+joblib.dump(predictor, "artifacts/credit_risk_predictor.pkl")
 
-Accuracy + ROC AUC combined chart
+# 13) Save feature list
+with open("artifacts/feature_list.json","w") as f:
+    json.dump({"categorical":categorical_cols, "numerical":numerical_cols}, f, indent=2)
 
-Calibration plots (pre/post isotonic) + Brier score
+# 14) Key Results (Test Set)
+LightGBM (monotonic + isotonic): ROC AUC ≈ 0.780, Brier ≈ 0.135
 
-Gain & Lift charts
+Comparative accuracy (Accuracy | ROC AUC):
+Logistic Regression (0.739 | 0.742), Decision Tree (0.768 | 0.764),
+Random Forest (0.800 | 0.780), XGBoost (0.805 | 0.769),
+LightGBM (0.804 | 0.770–0.780), SVM (0.753 | 0.753),
+KNN (0.812 | 0.736), MLP (0.768 | 0.685).
 
-Profit curve and optimal threshold with guardrails
+KS curves & lift/gain: strong early concentration; top 20% captures ~60% bads; top-decile lift > 3.
 
-Approval vs Default trade-off (operating thresholds)
+Profit curve: broad optimum around thresholds 0.22–0.26, enabling ~70–75% approvals with manageable bad rate among approvals (~11–13% in our test setting).
 
-SHAP: global bar, beeswarm, dependence, local waterfall/force
+# 15) Business Policy
+A three-band strategy derived from the calibrated probabilities:
 
-Risk-band distributions (e.g., utilisation by band)
+Approve below lower threshold;
 
-All saved to outputs/figures/.
+Manual Review in a narrow middle band (income verification / bureau refresh);
 
-9) Decision policy (example)
+Decline or Limit-Reduce above upper threshold.
+Thresholds can be tuned monthly on the profit curve under guardrails for minimum approval rate and maximum accepted bad rate.
 
-Two thresholds on calibrated probability:
+# Explainability
+Global drivers (SHAP): EVER_60_PLUS, recent PAY_0, utilisation ratios, payment-to-bill ratios, and AVG_PAY_STATUS.
 
-Approve: p < t_low
+Local: water­fall/force plots support adverse-action reason codes.
 
-Manual review: t_low ≤ p < t_high
+Dependence “story” views: risk increases sharply when utilisation approaches limit, especially with recent arrears.
 
-Decline/limit-reduce: p ≥ t_high
+# 16) Fairness & Uncertainty
+Segment TPR/FPR by sex broadly similar; small-support groups (education/marriage) require monitoring.
 
-Choose (t_low, t_high) on the profit curve, constrained by a minimum approval rate and maximum bad rate among approvals.
+Split conformal intervals provide per-case uncertainty; tight for very low risk, wider near decision boundary.
 
-10) Fairness & monitoring
+# 17) Saved Artifacts
+artifacts/credit_risk_predictor.pkl — packaged predictor (preprocessing + model + calibrator + conformal qhat)
 
-Report TPR/FPR by segment (with minimum-support rules).
+artifacts/feature_list.json — exact feature mapping used at train time
 
-Track PSI monthly for top features and the score.
+figures/ — ROC/PR, KS, lift/gain, calibration, approval–default, profit curves; SHAP plots.
 
-Refresh calibration quarterly; retrain on stability/calibration triggers.
+# 18) Citations (Harvard style)
+Balasubramanian, V., Ho, S. & Vovk, V. (2014).
+Bequé, A. & Lessmann, S. (2017).
+Brown, I. & Mues, C. (2012).
+Chen, C., Giudici, P., Liu, Y. & Raffinetti, E. (2024).
+de Lange, R. et al. (2022).
+Finlay, S. (2010).
+García García, J. & Rigobon, R. (2024).
+Jiang, B. et al. (2023).
+Ke, G. et al. (2017).
+Kozodoi, N., Lessmann, S. et al. (2024).
+Lessmann, S., Baesens, B., Seow, H. & Thomas, L. (2015).
+Lundberg, S. & Lee, S.-I. (2017).
+Mariscala, J. et al. (2024).
+Moscato, V. et al. (2021).
+Niculescu-Mizil, A. & Caruana, R. (2005).
+Shen, F., Zhao, X. & Kou, G. (2020).
+Shen, F. et al. (2022).
+Verbraken, T., Bravo, C., Weber, R. & Baesens, B. (2014).
+Wang, X. et al. (2022).
+Yeh, I.-C. & Lien, C. (2009).
 
-11) Results summary (from the included run)
+# License
+This repository is released under the MIT License. See LICENSE for details.
 
-Strong learners (LightGBM/XGBoost/Random Forest) outperform linear and single-tree baselines on ranking metrics.
 
-Calibrated monotonic LightGBM: AUROC ~0.78, Brier ~0.135 on test; well-behaved reliability.
 
-Gain/Lift: top 20% captures ~60% of defaulters; top-decile lift > 3.
-
-SHAP: repayment status, EVER_60_PLUS, utilisation, and payment-to-bill ratios dominate risk; explanations align with domain sense.
-
-12) Reuse in other contexts
-
-Swap in any tabular credit dataset with similar behavioural history.
-
-Keep the feature contracts and monotonic signs consistent for safe reuse.
-
-Regenerate thresholds using the local profit/cost matrix.
-
-13) License
-
-Specify your chosen license here (e.g., MIT). Add LICENSE to the repo.
-
-14) How to cite
-
-If this repository is used in academic or commercial work, please cite the project and the original dataset provider (Taiwan Default of Credit Card Clients).
-
-15) Acknowledgements
-
-Dataset: Default of Credit Card Clients (Taiwan).
-
-Libraries: scikit-learn, lightgbm, xgboost, shap.
